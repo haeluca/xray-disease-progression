@@ -1,0 +1,30 @@
+model:
+  class: ClassifierBackbone
+  num_features: 5
+
+optimizer:
+  class: AdamW
+  lr: 1e-3
+  weight_decay: 1e-5
+
+scheduler:
+  class: CosineAnnealingLR
+  T_max: 100
+
+training:
+  epochs: 100
+  batch_size: 32
+  num_workers: 4
+  checkpoint_interval: 10
+  early_stopping_patience: 15
+
+data:
+  image_size: 256
+  train_split: splits/train.csv
+  val_split: splits/val.csv
+  metadata_path: data/metadata.csv
+  roi_dir: data/processed/normalized
+
+paths:
+  checkpoint_dir: checkpoints/classifier
+  log_dir: logs/classifier

@@ -1,325 +1,194 @@
-# DDPM X-Ray Disease Progression Model
+# CMC I Osteoarthritis X-Ray Synthesis
 
-A **Conditional Denoising Diffusion Probabilistic Model (DDPM)** that generates synthetic future X-ray images showing disease progression (CMC I OA) conditioned on baseline hand X-rays.
+Modular architecture for two related generative modeling projects on thumb CMC I osteoarthritis radiographs:
 
-## 📋 Quick Overview
+- **Project A**: Feature-conditioned synthesis across disease spectrum
+- **Project B**: Contralateral pseudo-longitudinal modeling using left-right asymmetry
 
-This project learns to simulate how osteoarthritis progresses in hand X-rays over time. Given a baseline X-ray, the model can generate realistic future progression images, useful for:
-- Medical research and patient outcome prediction
-- Training data augmentation for clinical ML models
-- Understanding disease progression patterns
-
----
-
-## 🏗️ Architecture & Model Components
-
-### The Two Models: UNet + DDPM
-
-#### **1. UNet** (`models/unet.py`)
-The **denoising backbone** that learns to remove noise from X-ray images.
-
-**Architecture:**
-- **Input:** 2 channels (noisy progressed X-ray + baseline X-ray concatenated)
-- **Output:** 1 channel (predicted noise to subtract)
-- **Special feature:** Time embeddings that tell the network *which diffusion step* it's at
-
-**Components:**
-- **SinusoidalPositionEmbeddings:** Encodes the diffusion timestep into a 128-dim vector using sine/cosine waves (like positional encoding in transformers)
-- **ResBlocks:** Residual blocks that process features while incorporating time information through an MLP
-- **Encoder:** 4 downsampling stages with skip connections
-- **Bottleneck:** 2 residual blocks at the lowest resolution
-- **Decoder:** 4 upsampling stages with skip connections from encoder (U-Net style)
-- **Final projection:** Outputs predicted noise
-
-**Why this architecture?**
-The U-Net with skip connections allows the model to preserve fine-grained details from the baseline X-ray while learning disease-specific deformations at multiple scales.
-
----
-
-#### **2. DDPM** (`models/diffusion.py`)
-The **diffusion model** that manages the noise schedule and orchestrates training/sampling.
-
-**What it does:**
-
-**Training phase:**
-```
-Input: baseline X-ray (x_t0), future X-ray (x_t1), random timestep (t)
-
-1. Add noise to x_t1 according to timestep t:
-   x_noisy = √(ᾱ_t) × x_t1 + √(1 - ᾱ_t) × random_noise
-
-2. Concatenate: [x_noisy, x_t0] (noisy future + clean baseline)
-
-3. UNet predicts what noise was added
-
-4. Calculate MSE loss: ||predicted_noise - actual_noise||²
-
-5. Backprop to improve UNet's denoising
-```
-
-**Sampling phase (generating new X-rays):**
-```
-Input: baseline X-ray (x_t0)
-
-1. Start with pure random noise (x_T)
-
-2. For t = 1000 down to 0:
-   - Feed [x_t, x_t0] to UNet → get predicted noise
-   - Remove predicted noise from x_t
-   - If not final step, add small random noise back (controlled variance)
-   - x_t = slightly_denoised_x_t + small_random_noise
-
-3. Final x_0 = generated future X-ray
-```
-
-**Key parameters:**
-- **T = 1000:** Number of diffusion steps (more steps = slower but smoother)
-- **Beta schedule:** Linear schedule from 1e-4 to 0.02
-  - Determines how much noise to add at each step
-  - Small betas early (preserve signal), larger betas late (more noise)
-- **Alphas:** Derived from betas, used to scale signal vs noise
-
----
-
-## 🔄 The Diffusion Process Explained
-
-### Why Diffusion?
-
-Traditional generative models (VAE, GAN) directly transform noise → images.
-
-**Diffusion models** do it step-by-step:
-1. **Forward process (training):** Gradually add noise to real images
-2. **Reverse process (sampling):** Gradually remove noise to generate images
-
-This makes the learning problem **much easier**—the network only needs to predict one small denoising step at a time.
-
-### Conditional Diffusion
-
-Our model is **conditional**: it generates images *conditioned on* a baseline X-ray.
+## Architecture Overview
 
 ```
-Traditional DDPM:
-  noise → [denoise 1000 steps] → random image
-
-Conditional DDPM (ours):
-  noise + baseline_xray → [denoise 1000 steps] → realistic future progression
+Raw images + labels
+    ↓
+Data Preparation (metadata, ROI extraction, patient-level splits)
+    ↓
+Shared Infrastructure
+├─ Classifier (baseline feature-level classification)
+├─ Datasets (shared base + branch-specific)
+├─ Models (reusable components)
+├─ Engine (config-driven training)
+└─ Metrics (evaluation framework)
+    ↓
+Project A: Feature-Conditioned
+├─ Baseline: Conditional VAE
+└─ Main: Compact conditional diffusion
+    ↓
+Project B: Contralateral Pseudo-Longitudinal
+├─ Baseline: Pix2Pix-style paired translation
+└─ Main: Image-to-image conditional diffusion
+    ↓
+Shared Evaluation & Visualization
 ```
 
-The baseline is concatenated to every denoising step, guiding the model to generate disease-realistic progressions on that specific patient's anatomy.
+## Quick Start
 
----
+### 1. Data Preparation
 
-## 📁 Data Flow
-
-### Input: Paired X-Rays
-
-**Directory structure:**
-```
-data/train/
-├── patient_001/
-│   ├── t0.png  (baseline)
-│   └── t1.png  (future/progression)
-├── patient_002/
-│   ├── t0.png
-│   └── t1.png
-└── ...
-```
-
-### Data Pipeline
-
-**PairedXrayDataset** (`data/dataset.py`):
-- Scans all patient directories
-- Loads `t0.png` (baseline) and `t1.png` (future)
-- Applies transforms
-
-**Transforms** (`data/transforms.py`):
-1. **Resize** to 256×256
-2. **Random horizontal flip** (data augmentation)
-3. **ToTensor** (convert PIL image to PyTorch tensor)
-4. **Normalize** to [-1, 1] range (mean=0.5, std=0.5)
-
-```python
-# Normalization formula:
-# output = (input / 255 - 0.5) / 0.5 → maps [0,1] to [-1,1]
-```
-
----
-
-## 🎯 Training Pipeline
-
-### `train.py` Flow
-
-```python
-1. Load paired X-ray dataset
-   └─ Returns batches of {x_t0, x_t1}
-
-2. Initialize models:
-   ├─ UNet (denoising network)
-   └─ DDPM (diffusion orchestrator)
-
-3. For each epoch (200 total):
-   For each batch:
-   
-   a) Random timestep sampling
-      └─ t = random integer in [0, 1000)
-   
-   b) Forward pass (DDPM.forward):
-      ├─ Add noise to x_t1 at step t
-      ├─ Concatenate with x_t0
-      ├─ UNet predicts noise
-      └─ Calculate MSE loss
-   
-   c) Backward pass
-      ├─ optimizer.zero_grad()
-      ├─ loss.backward()
-      └─ optimizer.step()
-   
-   d) Log loss to progress bar
-
-4. Every 10 epochs: Save checkpoint to `./checkpoints/`
-```
-
-**Hyperparameters:**
-- Batch size: 8
-- Learning rate: 1e-4
-- Optimizer: AdamW
-- Loss: MSE (mean squared error on predicted vs actual noise)
-
----
-
-## 🎨 Sampling Pipeline
-
-### `sample.py` Flow
-
-```python
-1. Load trained UNet checkpoint
-   └─ Contains learned denoising weights
-
-2. Initialize DDPM model
-   └─ Loads diffusion schedule (same as training)
-
-3. Load baseline X-ray
-   └─ Resize, normalize to [-1, 1]
-
-4. Call DDPM.sample(baseline_xray)
-   └─ Runs iterative denoising (1000 steps)
-   └─ Returns generated progression X-ray
-
-5. Denormalize output
-   └─ Maps [-1, 1] back to [0, 1] for image saving
-
-6. Save as PNG
-```
-
-**Example usage:**
 ```bash
-python sample.py \
-  --baseline data/patient_001/t0.png \
-  --checkpoint checkpoints/model_epoch_100.pt \
-  --output generated_progression.png
+# Build metadata CSV from raw images
+python data/prepare_metadata.py --raw_dir data/raw --output data/metadata.csv
+
+# Extract and crop thumb CMC ROI
+python data/extract_roi.py --metadata data/metadata.csv --output data/processed/roi
+
+# Normalize left/right hand orientations
+python data/normalize_laterality.py --roi_dir data/processed/roi --output data/processed/normalized
+
+# Create patient-level splits
+python data/build_splits.py --metadata data/metadata.csv --output data/splits
+
+# Build contralateral pairs (Project B only)
+python data/pair_contralateral.py --metadata data/metadata.csv --output data/contralateral_pairs.csv
 ```
 
----
+### 2. Train Baseline Classifier
 
-## 🔑 Key Concepts
-
-| Concept | Explanation |
-|---------|-------------|
-| **Noise schedule (betas)** | Controls how much noise is added at each diffusion step. Linear schedule balances stability and quality. |
-| **Timestep embedding** | Sinusoidal encoding tells UNet which step it's denoising at. This is crucial—the network needs to know *when* it is. |
-| **Conditioning** | Concatenating baseline X-ray ensures generated progressions respect the patient's baseline anatomy. |
-| **MSE loss** | We only predict noise, not images directly. This makes the learning signal cleaner. |
-| **Skip connections** | U-Net's skip connections preserve baseline details while learning progression-specific features. |
-| **Grayscale (1 channel)** | X-rays are inherently grayscale; color information is unnecessary. Saves memory and computation. |
-
----
-
-## 📊 Model Capacity & Parameters
-
-**UNet layers:**
-- Initial conv: 2 → 64 channels
-- Encoder: 64 → 128 → 256 → 512 (with downsampling)
-- Bottleneck: 512 channels
-- Decoder: 512 → 256 → 128 → 64 (with upsampling + skip connections)
-- Final conv: 64 → 1 channel
-
-**Total parameters:** ~40M (typical for UNet this size)
-
----
-
-## 💡 Why This Approach?
-
-### Advantages of DDPM over alternatives:
-
-| Method | Pro | Con |
-|--------|-----|-----|
-| **GANs** | Fast sampling | Unstable training, mode collapse |
-| **VAE** | Stable, interpretable latent space | Blurry outputs |
-| **Diffusion (DDPM)** | **High quality, stable, flexible conditioning** | **Slow sampling (1000 steps)** |
-
-For medical imaging, **quality and stability** are critical. Diffusion models excel here.
-
----
-
-## 🚀 Next Steps / Extension Ideas
-
-1. **Accelerated sampling:** Use faster diffusion schedulers (DDIM, Karras) to reduce 1000 steps to ~50
-2. **Better conditioning:** Add temporal information (disease stage classification) to guide progression
-3. **Multi-timepoint:** Condition on multiple baseline timepoints for better anatomical consistency
-4. **Quantitative evaluation:** Compare generated vs real progression images using radiological metrics
-5. **Fine-tuning:** Start from pretrained diffusion models (ImageNet) instead of scratch
-
----
-
-## 📝 File Structure Summary
-
-```
-├── config.py              # Hyperparameters (image size, beta schedule, learning rate)
-├── train.py               # Training loop
-├── sample.py              # Inference/sampling script
-│
-├── models/
-│   ├── unet.py            # UNet denoising network
-│   ├── diffusion.py       # DDPM diffusion model wrapper
-│   └── __init__.py
-│
-├── data/
-│   ├── dataset.py         # PairedXrayDataset loader
-│   ├── transforms.py      # Image preprocessing (resize, normalize)
-│   └── __init__.py
-│
-└── checkpoints/           # Saved model weights (created during training)
+```bash
+python scripts/run_feature_conditioned.py --config configs/classifier.yaml --stage classifier
 ```
 
----
+### 3. Train Project A (Feature-Conditioned)
 
-## ⚙️ Technical Details
+```bash
+# Stage 1: Conditional VAE baseline
+python scripts/run_feature_conditioned.py --config configs/project_a.yaml --stage baseline
 
-### Noise Scheduling
+# Stage 2: Main conditional diffusion model
+python scripts/run_feature_conditioned.py --config configs/project_a.yaml --stage main
 
-The diffusion process uses a **linear beta schedule**:
-```
-β_t = β_start + (β_end - β_start) × t / T
-    = 0.0001 + 0.0199 × t / 1000
-```
-
-Then α_t = 1 - β_t, and ᾱ_t = ∏(α_i) from i=0 to t.
-
-These values control the signal-to-noise ratio at each step.
-
-### Time Embeddings
-
-Timesteps are encoded using sinusoids (like in Transformers):
-```
-emb[2k]   = sin(t / 10000^(2k/dim))
-emb[2k+1] = cos(t / 10000^(2k/dim))
+# Stage 3: Held-out evaluation
+python scripts/run_feature_conditioned.py --config configs/project_a.yaml --stage test
 ```
 
-This allows the UNet to learn which diffusion step it's at, essential for multi-scale denoising.
+### 4. Train Project B (Contralateral)
 
----
+```bash
+# Stage 1: Pix2Pix baseline
+python scripts/run_contralateral.py --config configs/project_b.yaml --stage baseline
 
-## 📖 References
+# Stage 2: Main image-conditioned diffusion
+python scripts/run_contralateral.py --config configs/project_b.yaml --stage main
+
+# Stage 3: Held-out evaluation
+python scripts/run_contralateral.py --config configs/project_b.yaml --stage test
+```
+
+## Directory Structure
+
+```
+data/
+├── prepare_metadata.py        # build master metadata CSV
+├── extract_roi.py             # crop thumb CMC region
+├── normalize_laterality.py    # mirror hands to common orientation
+├── build_splits.py            # patient-level train/val/test
+└── pair_contralateral.py      # bilateral pairing + feature deltas
+
+datasets/
+├── base_dataset.py            # shared dataset base class
+├── transforms.py              # transforms with paired-flip fix
+├── feature_conditioned_dataset.py  # Project A: single image + features
+└── contralateral_dataset.py        # Project B: bilateral pairs
+
+models/
+├── classifier_backbone.py     # feature classifier (ResNet-18)
+├── condition_encoder.py       # feature → conditioning embedding
+├── diffusion_unet.py          # conditional diffusion UNet + DDPM
+├── vae_baseline.py            # conditional VAE (Project A baseline)
+├── pix2pix_baseline.py        # Pix2Pix generator + discriminator (Project B)
+└── losses.py                  # centralized loss functions
+
+engine/
+├── train_classifier.py        # classifier training loop
+├── train_generator.py         # generic config-driven generator training
+├── validate_generator.py      # validation metrics + grid
+├── test_generator.py          # final held-out evaluation
+└── infer.py                   # batch inference / sampling
+
+metrics/
+├── feature_metrics.py         # label fidelity, per-feature agreement
+├── image_metrics.py           # SSIM, PSNR, L1 distance
+└── augmentation_study.py      # downstream utility evaluation
+
+viz/
+├── make_validation_grid.py    # training monitoring grid
+├── make_feature_traversals.py # single-feature edit panels
+├── make_final_report.py       # final PDF/image report
+└── embedding_plots.py         # real-vs-synthetic embeddings
+
+utils/
+├── reproducibility.py         # seed setting, env capture
+├── checkpoint.py              # save/load/best-model logic
+└── logger.py                  # TensorBoard + scalar logging
+
+scripts/
+├── run_feature_conditioned.py # Project A entry point (--stage classifier|baseline|main|test)
+└── run_contralateral.py       # Project B entry point
+
+configs/
+├── classifier.yaml            # shared baseline classifier config
+├── project_a.yaml             # Project A training config
+└── project_b.yaml             # Project B training config
+```
+
+## Key Design Principles
+
+1. **Patient-level separation first** — All splits defined before modeling; no patient leakage across train/val/test
+2. **ROI-focused** — Models operate on 256×256 thumb CMC crops, not full-hand radiographs
+3. **Config-driven** — Reusable training engine; branches differ only in config
+4. **Baseline before complexity** — Discriminative baseline, lightweight generative baseline, then main diffusion
+5. **Evaluation beyond realism** — Success measured on feature fidelity, anatomy preservation, downstream utility
+
+## Model Recommendations
+
+**Project A (Feature-Conditioned Synthesis)**
+- Baseline: Conditional VAE
+- Main: Compact conditional diffusion UNet
+
+**Project B (Contralateral Pseudo-Longitudinal)**
+- Baseline: Pix2Pix with U-Net generator + PatchGAN discriminator
+- Main: Image-to-image conditional diffusion
+
+## Config Structure
+
+All training configs (YAML) specify:
+- Model architecture and hyperparameters
+- Optimizer and learning rate schedule
+- Batch size, epochs, checkpoint interval
+- Data paths and feature dimensionality
+- Loss weights and training objectives
+
+See `configs/*.yaml` for examples.
+
+## Testing Strategy
+
+**Primary Outcomes**
+- Feature fidelity: Does generated image express requested feature state?
+- Anatomy preservation: Does image preserve patient-specific anatomy?
+- Downstream utility: Does synthetic augmentation improve real-image classifier?
+
+**Secondary Outcomes**
+- Image similarity metrics (SSIM, PSNR, LPIPS)
+- Sample quality summaries
+- Blinded expert ranking of realism and appropriateness
+
+## Evaluation Metrics
+
+- `metrics/feature_metrics.py` — Label fidelity, per-feature agreement, condition matching
+- `metrics/image_metrics.py` — SSIM, PSNR, L1 distance
+- `metrics/augmentation_study.py` — Retrain classifier with/without synthetic data
+
+## References
 
 - Denoising Diffusion Probabilistic Models (DDPM): [arxiv.org/abs/2006.11239](https://arxiv.org/abs/2006.11239)
-- Classifier-Free Diffusion Guidance (for future improvements): [arxiv.org/abs/2207.12598](https://arxiv.org/abs/2207.12598)
+- Pix2Pix: Image-to-Image Translation with Conditional GANs: [arxiv.org/abs/1611.05957](https://arxiv.org/abs/1611.05957)
+- U-Net: Convolutional Networks for Biomedical Image Segmentation: [arxiv.org/abs/1505.04597](https://arxiv.org/abs/1505.04597)

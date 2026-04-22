@@ -1,0 +1,50 @@
+model:
+  class: DDPM
+  generator:
+    class: DiffusionUNet
+    in_channels: 2
+    out_channels: 1
+    condition_dim: 5
+  T: 1000
+  beta_start: 1e-4
+  beta_end: 0.02
+
+baseline:
+  class: Pix2PixGenerator
+  input_channels: 1
+  output_channels: 1
+
+optimizer:
+  class: AdamW
+  lr: 1e-4
+  weight_decay: 1e-5
+
+scheduler:
+  class: CosineAnnealingLR
+  T_max: 200
+
+training:
+  epochs: 200
+  batch_size: 8
+  num_workers: 4
+  checkpoint_interval: 10
+  early_stopping_patience: 30
+
+loss:
+  reconstruction: l1
+  adversarial_weight: 0.1
+  condition_weight: 1.0
+
+data:
+  image_size: 256
+  num_features: 5
+  train_split: splits/train.csv
+  val_split: splits/val.csv
+  test_split: splits/test.csv
+  contralateral_pairs: data/contralateral_pairs.csv
+  roi_dir: data/processed/normalized
+
+paths:
+  checkpoint_dir: checkpoints/project_b
+  log_dir: logs/project_b
+  classifier_checkpoint: checkpoints/classifier/best.pt
