@@ -3,11 +3,22 @@ import torch.nn as nn
 import torchvision.models as models
 
 
-class ClassifierBackbone(nn.Module):
-    def __init__(self, num_features: int, pretrained: bool = False):
-        super().__init__()
-        resnet = models.resnet18(pretrained=pretrained)
+from utils.feature_schema import DEFAULT_FEATURE_SCHEMA
 
+
+class ClassifierBackbone(nn.Module):
+    def __init__(self, feature_schema=None, num_features: int = None, pretrained: bool = False):
+        super().__init__()
+        if feature_schema is None:
+            if num_features is not None:
+                feature_schema = [{"name": f"feature_{i}", "type": "continuous"} for i in range(num_features)]
+            else:
+                feature_schema = DEFAULT_FEATURE_SCHEMA
+
+        self.feature_schema = feature_schema
+        self.num_features = len(feature_schema)
+
+        resnet = models.resnet18(pretrained=pretrained)
         self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = resnet.bn1
         self.relu = resnet.relu
@@ -18,14 +29,24 @@ class ClassifierBackbone(nn.Module):
         self.layer4 = resnet.layer4
         self.avgpool = resnet.avgpool
 
-        self.feature_head = nn.Sequential(
+        self.trunk = nn.Sequential(
             nn.Linear(512, 256),
             nn.ReLU(),
-            nn.Linear(256, num_features),
         )
-        self.num_features = num_features
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self.heads = nn.ModuleList()
+        self.head_output_dims = []
+        for feat in feature_schema:
+            if feat["type"] == "ordinal":
+                out_dim = feat["num_classes"]
+            elif feat["type"] == "continuous":
+                out_dim = 1
+            else:
+                raise ValueError(f"Unknown feature type: {feat['type']}")
+            self.heads.append(nn.Linear(256, out_dim))
+            self.head_output_dims.append(out_dim)
+
+    def _trunk_forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -38,8 +59,22 @@ class ClassifierBackbone(nn.Module):
 
         x = self.avgpool(x)
         x = x.flatten(1)
-        x = self.feature_head(x)
-        return x
+        return self.trunk(x)
+
+    def forward(self, x: torch.Tensor):
+        h = self._trunk_forward(x)
+        return [head(h) for head in self.heads]
+
+    def predict_vector(self, x: torch.Tensor) -> torch.Tensor:
+        """Return a single feature vector per image (argmax for ordinal, scalar for continuous)."""
+        outs = self.forward(x)
+        pieces = []
+        for feat, out in zip(self.feature_schema, outs):
+            if feat["type"] == "ordinal":
+                pieces.append(out.argmax(dim=1, keepdim=True).float())
+            else:
+                pieces.append(out)
+        return torch.cat(pieces, dim=1)
 
     def freeze(self):
         for param in self.parameters():

@@ -91,7 +91,7 @@ class DiffusionUNet(nn.Module):
             [
                 nn.ModuleList(
                     [
-                        ResBlock(channels[i], channels[i], time_emb_dim),
+                        ResBlock(channels[0] if i == 0 else channels[i - 1], channels[i], time_emb_dim),
                         ResBlock(channels[i], channels[i], time_emb_dim),
                         Downsample(channels[i]) if i < len(channels) - 1 else nn.Identity(),
                     ]
@@ -107,18 +107,20 @@ class DiffusionUNet(nn.Module):
             ]
         )
 
-        self.decoder_blocks = nn.ModuleList(
-            [
+        decoder_list = []
+        for order, i in enumerate(reversed(range(len(channels)))):
+            incoming = channels[-1] if order == 0 else channels[i + 1]
+            skip = channels[i]
+            decoder_list.append(
                 nn.ModuleList(
                     [
-                        ResBlock(channels[i] * 2, channels[i], time_emb_dim),
+                        ResBlock(incoming + skip, channels[i], time_emb_dim),
                         ResBlock(channels[i], channels[i], time_emb_dim),
                         Upsample(channels[i]) if i > 0 else nn.Identity(),
                     ]
                 )
-                for i in reversed(range(len(channels)))
-            ]
-        )
+            )
+        self.decoder_blocks = nn.ModuleList(decoder_list)
 
         self.final_conv = nn.Sequential(
             nn.GroupNorm(8, channels[0]),

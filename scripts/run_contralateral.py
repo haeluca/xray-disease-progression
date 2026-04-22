@@ -1,13 +1,18 @@
 import argparse
-import yaml
-import torch
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import yaml
+import torch
+
 from utils.reproducibility import set_seed, capture_env
-from models.classifier_backbone import ClassifierBackbone
+from models.classifier_backbone import ClassifierBackbone, DEFAULT_FEATURE_SCHEMA
 from models.diffusion_unet import DDPM, DiffusionUNet
 from models.pix2pix_baseline import Pix2PixGenerator, PatchGANDiscriminator
 from engine.train_classifier import train_classifier
+from engine.train_generator import train_generator
 
 
 def load_config(config_path):
@@ -17,30 +22,32 @@ def load_config(config_path):
 
 def run_stage(stage, config, device):
     set_seed(42)
+    feature_schema = DEFAULT_FEATURE_SCHEMA
+    num_features = len(feature_schema)
 
     if stage == "classifier":
         print("Training classifier on real images...")
-        classifier = ClassifierBackbone(num_features=config["model"]["num_features"])
+        classifier = ClassifierBackbone(feature_schema=feature_schema)
         train_classifier(config, classifier, device=device)
 
     elif stage == "baseline":
         print("Training baseline Pix2Pix...")
         generator = Pix2PixGenerator(input_channels=1, output_channels=1)
         discriminator = PatchGANDiscriminator(input_channels=2)
-
-        generator = generator.to(device)
-        discriminator = discriminator.to(device)
-
-        print(
-            f"Pix2Pix Generator: {sum(p.numel() for p in generator.parameters())} parameters"
-        )
-        print(
-            f"PatchGAN Discriminator: {sum(p.numel() for p in discriminator.parameters())} parameters"
+        print(f"Pix2Pix Generator: {sum(p.numel() for p in generator.parameters())}")
+        print(f"PatchGAN Discriminator: {sum(p.numel() for p in discriminator.parameters())}")
+        train_generator(
+            config,
+            generator,
+            project="b",
+            objective="pix2pix",
+            device=device,
+            discriminator=discriminator,
+            feature_schema=feature_schema,
         )
 
     elif stage == "main":
         print("Training main image-conditioned diffusion model...")
-        num_features = config["data"]["num_features"]
         unet = DiffusionUNet(
             in_channels=2,
             out_channels=1,
@@ -49,15 +56,16 @@ def run_stage(stage, config, device):
         model = DDPM(
             unet,
             T=config["model"]["T"],
-            beta_start=config["model"]["beta_start"],
-            beta_end=config["model"]["beta_end"],
+            beta_start=float(config["model"]["beta_start"]),
+            beta_end=float(config["model"]["beta_end"]),
             device=device,
         )
-        model = model.to(device)
-        print(f"DDPM initialized with {sum(p.numel() for p in model.parameters())} parameters")
+        print(f"DDPM parameters: {sum(p.numel() for p in model.parameters())}")
+        train_generator(config, model, project="b", objective="ddpm", device=device, feature_schema=feature_schema)
 
     elif stage == "test":
         print("Running held-out evaluation...")
+        print("(test stage not yet implemented)")
 
     else:
         raise ValueError(f"Unknown stage: {stage}")
@@ -67,17 +75,15 @@ def run_stage(stage, config, device):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True, help="Path to config YAML")
+    parser.add_argument("--config", type=str, required=True)
     parser.add_argument(
         "--stage",
         type=str,
         choices=["classifier", "baseline", "main", "test"],
         required=True,
-        help="Training stage",
     )
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
 
     args = parser.parse_args()
-
     config = load_config(args.config)
     run_stage(args.stage, config, args.device)

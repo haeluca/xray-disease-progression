@@ -14,17 +14,24 @@ class ContralateralDataset(Dataset):
         num_features,
         transforms=None,
         image_size=256,
+        feature_schema=None,
     ):
         self.roi_dir = Path(roi_dir)
         self.transforms = transforms
         self.image_size = image_size
-        self.num_features = num_features
+        self.feature_schema = feature_schema
+        self.num_features = len(feature_schema) if feature_schema is not None else num_features
 
         split_df = pd.read_csv(split_csv)
         split_patients = set(split_df["patient_id"].unique())
 
         pairs_df = pd.read_csv(contralateral_pairs_csv)
         self.pairs = pairs_df[pairs_df["patient_id"].isin(split_patients)].reset_index(drop=True)
+
+        if feature_schema is not None:
+            self.delta_cols = [f"{feat['name']}_delta" for feat in feature_schema]
+        else:
+            self.delta_cols = [c for c in pairs_df.columns if c.endswith("_delta")][: self.num_features]
 
     def _load_image(self, path):
         img = Image.open(path).convert("L")
@@ -47,13 +54,11 @@ class ContralateralDataset(Dataset):
             target_img = self.transforms(target_img)
 
         feature_delta = []
-        for i in range(self.num_features):
-            col = f"feature_{i}_delta"
+        for col in self.delta_cols:
             if col in pair:
                 feature_delta.append(float(pair[col]))
             else:
                 feature_delta.append(0.0)
-
         feature_delta = torch.tensor(feature_delta, dtype=torch.float32)
 
         return {

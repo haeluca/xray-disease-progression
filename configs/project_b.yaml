@@ -4,7 +4,7 @@ model:
     class: DiffusionUNet
     in_channels: 2
     out_channels: 1
-    condition_dim: 5
+    condition_dim: 7
   T: 1000
   beta_start: 1e-4
   beta_end: 0.02
@@ -24,7 +24,7 @@ scheduler:
   T_max: 200
 
 training:
-  epochs: 200
+  epochs: 1
   batch_size: 8
   num_workers: 4
   checkpoint_interval: 10
@@ -36,11 +36,11 @@ loss:
   condition_weight: 1.0
 
 data:
-  image_size: 256
-  num_features: 5
-  train_split: splits/train.csv
-  val_split: splits/val.csv
-  test_split: splits/test.csv
+  image_size: 64
+  num_features: 7
+  train_split: data/splits/train.csv
+  val_split: data/splits/val.csv
+  test_split: data/splits/test.csv
   contralateral_pairs: data/contralateral_pairs.csv
   roi_dir: data/processed/normalized
 

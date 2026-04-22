@@ -13,16 +13,18 @@ class FeatureConditionedDataset(BaseDataset):
         transforms=None,
         image_size=256,
         randomize_target=False,
+        feature_schema=None,
     ):
-        super().__init__(split_csv, metadata_csv, roi_dir, transforms, image_size)
-        self.num_features = num_features
+        super().__init__(
+            split_csv,
+            metadata_csv,
+            roi_dir,
+            transforms,
+            image_size,
+            num_features=num_features,
+            feature_schema=feature_schema,
+        )
         self.randomize_target = randomize_target
-
-        feature_cols = [c for c in self.metadata_df.columns if c.startswith("feature_")]
-        self.feature_cols = feature_cols[: num_features] if feature_cols else []
-
-        while len(self.feature_cols) < num_features:
-            self.feature_cols.append(f"feature_{len(self.feature_cols)}")
 
     def __getitem__(self, idx):
         item = super().__getitem__(idx)

@@ -4,14 +4,14 @@ model:
     class: DiffusionUNet
     in_channels: 1
     out_channels: 1
-    condition_dim: 5
+    condition_dim: 7
   T: 1000
   beta_start: 1e-4
   beta_end: 0.02
 
 baseline:
   class: ConditionalVAE
-  condition_dim: 5
+  condition_dim: 7
 
 optimizer:
   class: AdamW
@@ -23,7 +23,7 @@ scheduler:
   T_max: 200
 
 training:
-  epochs: 200
+  epochs: 1
   batch_size: 8
   num_workers: 4
   checkpoint_interval: 10
@@ -36,11 +36,11 @@ loss:
   use_classifier: false
 
 data:
-  image_size: 256
-  num_features: 5
-  train_split: splits/train.csv
-  val_split: splits/val.csv
-  test_split: splits/test.csv
+  image_size: 64
+  num_features: 7
+  train_split: data/splits/train.csv
+  val_split: data/splits/val.csv
+  test_split: data/splits/test.csv
   metadata_path: data/metadata.csv
   roi_dir: data/processed/normalized
 

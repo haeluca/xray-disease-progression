@@ -3,9 +3,11 @@ import torch.nn as nn
 
 
 class ConditionalVAE(nn.Module):
-    def __init__(self, image_channels=1, latent_dim=32, condition_dim=0):
+    def __init__(self, image_channels=1, latent_dim=32, condition_dim=0, image_size=256):
         super().__init__()
         self.latent_dim = latent_dim
+        self.image_size = image_size
+        self.decoder_spatial = image_size // 16
 
         self.encoder = nn.Sequential(
             nn.Conv2d(image_channels, 32, kernel_size=4, stride=2, padding=1),
@@ -24,7 +26,7 @@ class ConditionalVAE(nn.Module):
 
         self.condition_dim = condition_dim
 
-        self.decoder_fc = nn.Linear(latent_dim + condition_dim, 256 * 16 * 16)
+        self.decoder_fc = nn.Linear(latent_dim + condition_dim, 256 * self.decoder_spatial * self.decoder_spatial)
 
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
@@ -59,7 +61,7 @@ class ConditionalVAE(nn.Module):
             z = torch.cat([z, condition], dim=1)
 
         h = self.decoder_fc(z)
-        h = h.view(h.size(0), 256, 16, 16)
+        h = h.view(h.size(0), 256, self.decoder_spatial, self.decoder_spatial)
         x_recon = self.decoder(h)
 
         return x_recon

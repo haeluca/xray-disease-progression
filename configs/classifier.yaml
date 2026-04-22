@@ -1,6 +1,6 @@
 model:
   class: ClassifierBackbone
-  num_features: 5
+  use_default_feature_schema: true
 
 optimizer:
   class: AdamW
@@ -20,8 +20,9 @@ training:
 
 data:
   image_size: 256
-  train_split: splits/train.csv
-  val_split: splits/val.csv
+  num_features: 7
+  train_split: data/splits/train.csv
+  val_split: data/splits/val.csv
   metadata_path: data/metadata.csv
   roi_dir: data/processed/normalized
 
