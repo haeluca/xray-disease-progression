@@ -13,6 +13,7 @@ from models.diffusion_unet import DDPM, DiffusionUNet
 from models.pix2pix_baseline import Pix2PixGenerator, PatchGANDiscriminator
 from engine.train_classifier import train_classifier
 from engine.train_generator import train_generator
+from engine.test_generator import test_generator
 
 
 def load_config(config_path):
@@ -64,8 +65,17 @@ def run_stage(stage, config, device):
         train_generator(config, model, project="b", objective="ddpm", device=device, feature_schema=feature_schema)
 
     elif stage == "test":
-        print("Running held-out evaluation...")
-        print("(test stage not yet implemented)")
+        print("Running held-out evaluation (Project B)...")
+        unet = DiffusionUNet(in_channels=2, out_channels=1, condition_dim=num_features)
+        model = DDPM(
+            unet,
+            T=config["model"]["T"],
+            beta_start=float(config["model"]["beta_start"]),
+            beta_end=float(config["model"]["beta_end"]),
+            device=device,
+        )
+        test_generator(config, model, project="b", objective="ddpm", device=device,
+                       classifier=None, feature_schema=feature_schema)
 
     else:
         raise ValueError(f"Unknown stage: {stage}")

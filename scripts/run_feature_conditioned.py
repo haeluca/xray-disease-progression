@@ -13,6 +13,7 @@ from models.diffusion_unet import DDPM, DiffusionUNet
 from models.vae_baseline import ConditionalVAE
 from engine.train_classifier import train_classifier
 from engine.train_generator import train_generator
+from engine.test_generator import test_generator
 
 
 def load_config(config_path):
@@ -59,8 +60,29 @@ def run_stage(stage, config, device):
         train_generator(config, model, project="a", objective="ddpm", device=device, feature_schema=feature_schema)
 
     elif stage == "test":
-        print("Running held-out evaluation...")
-        print("(test stage not yet implemented)")
+        print("Running held-out evaluation (Project A)...")
+        unet = DiffusionUNet(in_channels=2, out_channels=1, condition_dim=num_features)
+        model = DDPM(
+            unet,
+            T=config["model"]["T"],
+            beta_start=float(config["model"]["beta_start"]),
+            beta_end=float(config["model"]["beta_end"]),
+            device=device,
+        )
+        classifier_ckpt = config["paths"].get("classifier_checkpoint")
+        classifier = None
+        if classifier_ckpt:
+            classifier = ClassifierBackbone(feature_schema=feature_schema)
+            try:
+                from utils.checkpoint import load_checkpoint
+                load_checkpoint(classifier_ckpt, classifier, device=device)
+                classifier.freeze()
+                print(f"Loaded classifier from {classifier_ckpt}")
+            except FileNotFoundError:
+                print(f"Classifier checkpoint not found at {classifier_ckpt}, skipping feature fidelity.")
+                classifier = None
+        test_generator(config, model, project="a", objective="ddpm", device=device,
+                       classifier=classifier, feature_schema=feature_schema)
 
     else:
         raise ValueError(f"Unknown stage: {stage}")

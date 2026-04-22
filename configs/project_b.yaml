@@ -47,4 +47,5 @@ data:
 paths:
   checkpoint_dir: checkpoints/project_b
   log_dir: logs/project_b
+  output_dir: outputs/project_b
   classifier_checkpoint: checkpoints/classifier/best.pt

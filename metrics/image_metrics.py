@@ -47,3 +47,17 @@ def psnr(pred, target, max_val=1.0):
 
 def l1_distance(pred, target):
     return torch.mean(torch.abs(pred - target))
+
+
+def evaluate_image_quality(pred, target):
+    """
+    Returns a dict with ssim, psnr, and l1 for a batch of images in [-1, 1].
+    Normalises to [0, 1] before computing metrics.
+    """
+    pred_01 = (pred * 0.5 + 0.5).clamp(0, 1)
+    target_01 = (target * 0.5 + 0.5).clamp(0, 1)
+    return {
+        "ssim": ssim(pred_01, target_01).item(),
+        "psnr": psnr(pred_01, target_01).item(),
+        "l1": l1_distance(pred_01, target_01).item(),
+    }
