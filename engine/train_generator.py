@@ -36,7 +36,6 @@ def _build_dataloaders(config, project, feature_schema=None):
             num_features=num_features,
             transforms=train_tf,
             image_size=config["data"]["image_size"],
-            randomize_target=config["training"].get("randomize_target_features", False),
             feature_schema=feature_schema,
         )
         val_ds = FeatureConditionedDataset(
@@ -46,7 +45,6 @@ def _build_dataloaders(config, project, feature_schema=None):
             num_features=num_features,
             transforms=val_tf,
             image_size=config["data"]["image_size"],
-            randomize_target=False,
             feature_schema=feature_schema,
         )
     elif project == "b":
@@ -82,11 +80,11 @@ def _build_dataloaders(config, project, feature_schema=None):
 def _unpack_batch(batch, project, objective, device):
     """Move batch tensors to device and return a unified dict keyed by role."""
     if project == "a":
-        image = batch["image"].to(device)
+        # Project A: unconditional image synthesis — target image + feature vector only.
+        # No source/conditioning image; the model generates from noise guided by the vector.
+        target = batch["target"].to(device)
         cond_vec = batch["target_features"].to(device)
-        if objective == "ddpm":
-            return {"target": image, "condition_image": image, "condition_vector": cond_vec}
-        return {"target": image, "condition_vector": cond_vec}
+        return {"target": target, "condition_vector": cond_vec}
     else:
         source = batch["source"].to(device)
         target = batch["target"].to(device)
@@ -98,16 +96,16 @@ def _step_ddpm(model, batch_data, project):
     """
     One DDPM training step: sample a random t, corrupt the target, predict noise, return MSE.
 
-    For Project A the conditioning image is the same image (self-conditioned synthesis).
-    For Project B it is the contralateral source image.
+    Project A: no conditioning image — generates from noise guided by the feature vector alone.
+    Project B: conditioning image is the contralateral (less-affected) source image.
     """
     target = batch_data["target"]
     cond_vec = batch_data["condition_vector"]
-    cond_img = batch_data["condition_image"] if project == "a" else batch_data["source"]
+    cond_img = batch_data["source"] if project == "b" else None
 
     B = target.shape[0]
     t = torch.randint(0, model.T, (B,), device=target.device).long()
-    loss = model(target, cond_img, t, condition_vector=cond_vec)
+    loss = model(target, x_condition=cond_img, t=t, condition_vector=cond_vec)
     return loss
 
 

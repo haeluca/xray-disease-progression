@@ -73,34 +73,75 @@ Checkpoints saved to `checkpoints/project_b/`
 
 ## 6. Generate Samples
 
+**Project A** generates from pure noise conditioned on a feature vector (no source image needed):
+
+```python
+from models.diffusion_unet import DDPM, DiffusionUNet
+from utils.feature_schema import DEFAULT_FEATURE_SCHEMA
+import torch
+
+# Load model (in_channels=1 — feature-only conditioning, no source image)
+num_features = len(DEFAULT_FEATURE_SCHEMA)
+unet = DiffusionUNet(in_channels=1, out_channels=1, condition_dim=num_features)
+model = DDPM(unet, device="cuda")
+model.load_state_dict(torch.load("checkpoints/project_a/best.pt")["model_state_dict"])
+model.eval()
+
+# Feature vector: one value per feature in DEFAULT_FEATURE_SCHEMA order
+# e.g. JSN=2, osteophytes=1, cysts_relevant=0, cysts_irrelevant=0,
+#      sclerosis=1, stt_involvement=0, subluxation_ratio=0.3
+feature_vector = torch.tensor([[2, 1, 0, 0, 1, 0, 0.3]], dtype=torch.float32).to("cuda")
+
+# Generate — shape is (batch, channels, height, width)
+with torch.no_grad():
+    generated = model.sample((1, 1, 64, 64), condition_vector=feature_vector)
+
+# Save
+from torchvision.transforms import ToPILImage
+output_img = ToPILImage()((generated[0] * 0.5 + 0.5).clamp(0, 1).cpu())
+output_img.save("generated.png")
+```
+
+**Project B** generates by translating a source image toward the more-affected state:
+
 ```python
 from models.diffusion_unet import DDPM, DiffusionUNet
 from datasets.transforms import get_val_transforms
 from PIL import Image
 import torch
 
-# Load model
-unet = DiffusionUNet(in_channels=1, out_channels=1, condition_dim=5)
+num_features = 7
+unet = DiffusionUNet(in_channels=2, out_channels=1, condition_dim=num_features)
 model = DDPM(unet, device="cuda")
-model.load_state_dict(torch.load("checkpoints/project_a/best.pt")["model_state_dict"])
+model.load_state_dict(torch.load("checkpoints/project_b/best.pt")["model_state_dict"])
 model.eval()
 
-# Load condition image and feature vector
-condition_img = Image.open("example.png").convert("L")
-transform = get_val_transforms()
-condition_tensor = transform(condition_img).unsqueeze(0).to("cuda")
+# Load less-affected source image
+tf = get_val_transforms(64)
+source = tf(Image.open("source.png").convert("L")).unsqueeze(0).to("cuda")
 
-# Feature condition: e.g., [OA_grade, JSW, osteophyte, ...]
-feature_vector = torch.tensor([[2, 1.5, 0.8, 0.3, 0.2]], dtype=torch.float32).to("cuda")
+# Feature delta: how much more affected the target should be
+delta = torch.tensor([[1, 1, 0, 0, 0, 0, 0.1]], dtype=torch.float32).to("cuda")
 
-# Generate
 with torch.no_grad():
-    generated = model.sample(condition_tensor, shape=condition_tensor.shape, condition_vector=feature_vector)
+    generated = model.sample(source.shape, condition_vector=delta, x_condition=source)
 
-# Save
 from torchvision.transforms import ToPILImage
-output_img = ToPILImage()((generated[0] * 0.5 + 0.5).clamp(0, 1).cpu())
-output_img.save("generated.png")
+ToPILImage()((generated[0] * 0.5 + 0.5).clamp(0, 1).cpu()).save("generated.png")
+```
+
+Or use the CLI:
+
+```bash
+# Project A
+python engine/infer.py --config configs/project_a.yaml \
+    --checkpoint checkpoints/project_a/best.pt \
+    --project a --objective ddpm --output outputs/samples_a/
+
+# Project B
+python engine/infer.py --config configs/project_b.yaml \
+    --checkpoint checkpoints/project_b/best.pt \
+    --project b --objective ddpm --output outputs/samples_b/
 ```
 
 ## Key Directories

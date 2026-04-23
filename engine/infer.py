@@ -1,7 +1,7 @@
 """
 Batch inference / sampling from a trained generator.
 
-Usage (Project A — DDPM, condition vector from CSV):
+Usage (Project A — DDPM, generates from noise conditioned on feature vector):
     python engine/infer.py \
         --config configs/project_a.yaml \
         --checkpoint checkpoints/project_a/best.pt \
@@ -59,7 +59,6 @@ def _build_loader(config, project, feature_schema, split="test"):
             num_features=num_features,
             transforms=tf,
             image_size=config["data"]["image_size"],
-            randomize_target=False,
             feature_schema=feature_schema,
         )
     else:
@@ -77,9 +76,18 @@ def _build_loader(config, project, feature_schema, split="test"):
                       num_workers=config["training"].get("num_workers", 0))
 
 
-def _build_model(config, objective, num_features, device):
+def _build_model(config, objective, num_features, device, project="a"):
+    """
+    Instantiate the model for the given objective and project.
+
+    in_channels is read from config['model']['generator']['in_channels'] when available,
+    falling back to 1 for Project A (feature-only conditioning) and 2 for Project B
+    (noisy target + source image concatenated).
+    """
     if objective == "ddpm":
-        unet = DiffusionUNet(in_channels=2, out_channels=1, condition_dim=num_features)
+        default_in_ch = 1 if project == "a" else 2
+        in_ch = config["model"]["generator"].get("in_channels", default_in_ch)
+        unet = DiffusionUNet(in_channels=in_ch, out_channels=1, condition_dim=num_features)
         model = DDPM(
             unet,
             T=config["model"]["T"],
@@ -105,7 +113,7 @@ def run_infer(config, checkpoint_path, project, objective, output_dir, device, s
     feature_schema = DEFAULT_FEATURE_SCHEMA
     num_features = len(feature_schema)
 
-    model = _build_model(config, objective, num_features, device)
+    model = _build_model(config, objective, num_features, device, project=project)
     load_checkpoint(checkpoint_path, model, device=device)
     model = model.to(device)
     model.eval()
@@ -122,10 +130,10 @@ def run_infer(config, checkpoint_path, project, objective, output_dir, device, s
                 break
 
             if project == "a":
-                image = batch["image"].to(device)
+                # Project A: generate from noise conditioned on the feature vector only.
+                real = batch["target"].to(device)
                 cond_vec = batch["target_features"].to(device)
-                cond_img = image
-                real = image
+                cond_img = None
             else:
                 source = batch["source"].to(device)
                 target = batch["target"].to(device)
@@ -134,7 +142,10 @@ def run_infer(config, checkpoint_path, project, objective, output_dir, device, s
                 real = target
 
             if objective == "ddpm":
-                generated = model.sample(cond_img, cond_img.shape, condition_vector=cond_vec)
+                if project == "a":
+                    generated = model.sample(real.shape, condition_vector=cond_vec)
+                else:
+                    generated = model.sample(real.shape, condition_vector=cond_vec, x_condition=cond_img)
             elif objective == "vae":
                 generated, _, _ = model(real, cond_vec)
             else:

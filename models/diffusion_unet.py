@@ -241,18 +241,33 @@ class DDPM(nn.Module):
         self.register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod))
         self.register_buffer("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1))
 
-    def forward(self, x_target, x_condition, t, condition_vector=None):
+    def forward(self, x_target, x_condition=None, t=None, condition_vector=None):
         """
         Training step: corrupt x_target at timestep t, predict the noise, return MSE loss.
 
         Args:
-            x_target:          (B, 1, H, W) clean target image in [-1, 1].
-            x_condition:       (B, 1, H, W) conditioning image (same patient, other side / source).
+            x_target:          (B, C, H, W) clean target image in [-1, 1].
+            x_condition:       (B, C, H, W) conditioning image concatenated channel-wise, or
+                               None for unconditional / feature-only conditioning (Project A).
+                               Must be provided when the UNet was built with in_channels > 1.
             t:                 (B,) integer timestep sampled uniformly from [0, T).
             condition_vector:  (B, condition_dim) feature vector, or None.
         Returns:
             Scalar MSE loss between predicted and actual noise.
+
+        Raises:
+            ValueError: if x_condition is None but the UNet expects more than 1 input channel.
         """
+        if t is None:
+            raise ValueError("Timestep t must be provided to DDPM.forward().")
+
+        in_channels = self.unet.initial_conv.in_channels
+        if x_condition is None and in_channels > 1:
+            raise ValueError(
+                f"DDPM.forward: x_condition is None but DiffusionUNet was built with "
+                f"in_channels={in_channels}. Either pass x_condition or rebuild with in_channels=1."
+            )
+
         noise = torch.randn_like(x_target)
 
         sqrt_alphas_cumprod_t = self.sqrt_alphas_cumprod[t]
@@ -263,25 +278,41 @@ class DDPM(nn.Module):
             + sqrt_one_minus_alphas_cumprod_t[:, None, None, None] * noise
         )
 
-        x_combined = torch.cat([x_noisy, x_condition], dim=1)
+        if x_condition is not None:
+            x_combined = torch.cat([x_noisy, x_condition], dim=1)
+        else:
+            x_combined = x_noisy
+
         predicted_noise = self.unet(x_combined, t, condition=condition_vector)
         loss = torch.nn.functional.mse_loss(predicted_noise, noise)
 
         return loss
 
     @torch.no_grad()
-    def sample(self, x_condition, shape, condition_vector=None):
+    def sample(self, shape, condition_vector=None, x_condition=None):
         """
         Reverse diffusion: iteratively denoise pure Gaussian noise into a generated image.
 
         Args:
-            x_condition:      (B, 1, H, W) conditioning image concatenated at each step.
-            shape:            Output shape tuple, typically x_condition.shape.
+            shape:            Output shape tuple (B, C, H, W). B determines batch size.
             condition_vector: (B, condition_dim) feature vector, or None.
+            x_condition:      (B, C, H, W) conditioning image concatenated at every step, or
+                              None for unconditional / feature-only conditioning (Project A).
+                              Must be provided when the UNet was built with in_channels > 1.
         Returns:
-            Generated image tensor (B, 1, H, W) in approximately [-1, 1].
+            Generated image tensor (B, C, H, W) in approximately [-1, 1].
+
+        Raises:
+            ValueError: if x_condition is None but the UNet expects more than 1 input channel.
         """
-        batch_size = x_condition.shape[0]
+        in_channels = self.unet.initial_conv.in_channels
+        if x_condition is None and in_channels > 1:
+            raise ValueError(
+                f"DDPM.sample: x_condition is None but DiffusionUNet was built with "
+                f"in_channels={in_channels}. Either pass x_condition or rebuild with in_channels=1."
+            )
+
+        batch_size = shape[0]
         x_t = torch.randn(shape, device=self.device)
 
         for t in reversed(range(self.T)):
@@ -291,7 +322,11 @@ class DDPM(nn.Module):
             sqrt_recipm1_alphas_cumprod_t = self.sqrt_recipm1_alphas_cumprod[t]
             betas_t = self.betas[t]
 
-            x_combined = torch.cat([x_t, x_condition], dim=1)
+            if x_condition is not None:
+                x_combined = torch.cat([x_t, x_condition], dim=1)
+            else:
+                x_combined = x_t
+
             predicted_noise = self.unet(x_combined, t_tensor, condition=condition_vector)
 
             # DDPM reverse step (eq. 11 in Ho et al. 2020)

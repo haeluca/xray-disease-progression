@@ -28,7 +28,6 @@ training:
   num_workers: 4
   checkpoint_interval: 10
   early_stopping_patience: 30
-  randomize_target_features: false
 
 loss:
   reconstruction: mse

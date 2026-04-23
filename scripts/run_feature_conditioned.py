@@ -43,9 +43,10 @@ def run_stage(stage, config, device):
         train_generator(config, model, project="a", objective="vae", device=device, feature_schema=feature_schema)
 
     elif stage == "main":
-        print("Training main conditional diffusion model...")
+        print("Training main feature-conditioned diffusion model...")
+        in_ch = config["model"]["generator"].get("in_channels", 1)
         unet = DiffusionUNet(
-            in_channels=2,
+            in_channels=in_ch,
             out_channels=1,
             condition_dim=num_features,
         )
@@ -61,7 +62,8 @@ def run_stage(stage, config, device):
 
     elif stage == "test":
         print("Running held-out evaluation (Project A)...")
-        unet = DiffusionUNet(in_channels=2, out_channels=1, condition_dim=num_features)
+        in_ch = config["model"]["generator"].get("in_channels", 1)
+        unet = DiffusionUNet(in_channels=in_ch, out_channels=1, condition_dim=num_features)
         model = DDPM(
             unet,
             T=config["model"]["T"],

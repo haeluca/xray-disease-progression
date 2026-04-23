@@ -34,7 +34,6 @@ def _build_test_loader(config, project, feature_schema):
             num_features=num_features,
             transforms=tf,
             image_size=config["data"]["image_size"],
-            randomize_target=False,
             feature_schema=feature_schema,
         )
     else:
@@ -89,11 +88,12 @@ def test_generator(config, model, project, objective, device="cpu",
     with torch.no_grad():
         for batch_idx, batch in enumerate(tqdm(loader, desc="Test evaluation")):
             if project == "a":
-                image = batch["image"].to(device)
+                # Project A: generate from noise conditioned on the feature vector.
+                # cond_img is None — no source image is used.
+                target = batch["target"].to(device)
                 target_features = batch["target_features"].to(device)
-                cond_img = image
+                cond_img = None
                 cond_vec = target_features
-                target = image
             else:
                 source = batch["source"].to(device)
                 target = batch["target"].to(device)
@@ -104,8 +104,10 @@ def test_generator(config, model, project, objective, device="cpu",
 
             # generate
             if objective == "ddpm":
-                shape = target.shape
-                generated = model.sample(cond_img, shape, condition_vector=cond_vec)
+                if project == "a":
+                    generated = model.sample(target.shape, condition_vector=cond_vec)
+                else:
+                    generated = model.sample(target.shape, condition_vector=cond_vec, x_condition=cond_img)
             elif objective == "vae":
                 generated, _, _ = model(target, cond_vec)
             else:
