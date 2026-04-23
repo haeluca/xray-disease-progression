@@ -1,3 +1,14 @@
+"""
+Generic config-driven training loop shared by all generator objectives.
+
+Supports three objectives selected at call time:
+  - 'ddpm'     : DDPM noise-prediction loss (Projects A and B)
+  - 'vae'      : ELBO = reconstruction MSE + β·KL (Project A baseline)
+  - 'pix2pix'  : L1 reconstruction + adversarial PatchGAN loss (Project B baseline)
+
+Entry point: train_generator(config, model, project, objective, ...).
+"""
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,6 +23,7 @@ from datasets.contralateral_dataset import ContralateralDataset
 
 
 def _build_dataloaders(config, project, feature_schema=None):
+    """Instantiate train and val DataLoaders for project 'a' or 'b'."""
     train_tf = get_train_transforms(config["data"]["image_size"])
     val_tf = get_val_transforms(config["data"]["image_size"])
     num_features = len(feature_schema) if feature_schema is not None else config["data"]["num_features"]
@@ -68,6 +80,7 @@ def _build_dataloaders(config, project, feature_schema=None):
 
 
 def _unpack_batch(batch, project, objective, device):
+    """Move batch tensors to device and return a unified dict keyed by role."""
     if project == "a":
         image = batch["image"].to(device)
         cond_vec = batch["target_features"].to(device)
@@ -82,12 +95,15 @@ def _unpack_batch(batch, project, objective, device):
 
 
 def _step_ddpm(model, batch_data, project):
+    """
+    One DDPM training step: sample a random t, corrupt the target, predict noise, return MSE.
+
+    For Project A the conditioning image is the same image (self-conditioned synthesis).
+    For Project B it is the contralateral source image.
+    """
     target = batch_data["target"]
     cond_vec = batch_data["condition_vector"]
-    if project == "a":
-        cond_img = batch_data["condition_image"]
-    else:
-        cond_img = batch_data["source"]
+    cond_img = batch_data["condition_image"] if project == "a" else batch_data["source"]
 
     B = target.shape[0]
     t = torch.randint(0, model.T, (B,), device=target.device).long()
@@ -96,6 +112,7 @@ def _step_ddpm(model, batch_data, project):
 
 
 def _step_vae(model, batch_data):
+    """One VAE training step; returns total ELBO loss and a dict of sub-losses for logging."""
     target = batch_data["target"]
     cond = batch_data["condition_vector"]
     recon, mu, logvar = model(target, cond)
@@ -105,11 +122,19 @@ def _step_vae(model, batch_data):
 
 
 def _step_pix2pix(generator, discriminator, batch_data, opt_g, opt_d, adv_weight=0.1, l1_weight=10.0):
+    """
+    One Pix2Pix training step with alternating D and G updates.
+
+    Discriminator update uses detached fake to avoid backprop through generator.
+    Generator update uses fresh forward pass so gradients flow.
+    Returns generator loss and a dict of sub-losses for logging.
+    """
     source = batch_data["source"]
     target = batch_data["target"]
 
     fake = generator(source)
 
+    # --- discriminator update ---
     opt_d.zero_grad()
     real_pair = torch.cat([source, target], dim=1)
     fake_pair = torch.cat([source, fake.detach()], dim=1)
@@ -122,6 +147,7 @@ def _step_pix2pix(generator, discriminator, batch_data, opt_g, opt_d, adv_weight
     d_loss.backward()
     opt_d.step()
 
+    # --- generator update ---
     opt_g.zero_grad()
     fake_pair = torch.cat([source, fake], dim=1)
     d_fake = discriminator(fake_pair)
@@ -136,8 +162,18 @@ def _step_pix2pix(generator, discriminator, batch_data, opt_g, opt_d, adv_weight
 
 def train_generator(config, model, project, objective, device="cuda", discriminator=None, feature_schema=None):
     """
-    project: "a" or "b"
-    objective: "ddpm" | "vae" | "pix2pix"
+    Train a generator with early stopping and best-checkpoint saving.
+
+    Args:
+        config:        YAML config dict (optimizer, scheduler, training, paths sections used).
+        model:         Generator model (DDPM, ConditionalVAE, or Pix2PixGenerator).
+        project:       'a' (feature-conditioned) or 'b' (contralateral).
+        objective:     'ddpm' | 'vae' | 'pix2pix' — controls loss and batch handling.
+        device:        Torch device string.
+        discriminator: Required for pix2pix objective; ignored otherwise.
+        feature_schema: Feature definition list passed to dataset constructors.
+    Returns:
+        Best validation loss achieved.
     """
     logger = Logger(config["paths"]["log_dir"])
     logger.save_config(config)

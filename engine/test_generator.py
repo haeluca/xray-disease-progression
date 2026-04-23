@@ -1,3 +1,12 @@
+"""
+Held-out evaluation engine for trained generators.
+
+Loads the best checkpoint from the configured checkpoint directory, runs all
+batches of the test split, computes image quality (SSIM/PSNR/L1) and optionally
+feature fidelity (using the frozen classifier for Project A), then writes
+per-batch metrics to outputs/<project>/test_results.csv and prints averages.
+"""
+
 import csv
 import torch
 from pathlib import Path
@@ -13,6 +22,7 @@ from utils.checkpoint import load_checkpoint, find_best_checkpoint
 
 
 def _build_test_loader(config, project, feature_schema):
+    """Build a non-shuffled test DataLoader for project 'a' or 'b'."""
     tf = get_val_transforms(config["data"]["image_size"])
     num_features = len(feature_schema)
 

@@ -1,3 +1,11 @@
+"""
+Dataset for Project B: contralateral pseudo-longitudinal synthesis.
+
+Each sample is a bilateral pair from the same patient — the less-affected hand
+(source) and the more-affected hand (target) — together with the per-feature
+delta vector encoding how much worse the more-affected side is.
+"""
+
 import torch
 import pandas as pd
 from pathlib import Path
@@ -6,6 +14,28 @@ from torch.utils.data import Dataset
 
 
 class ContralateralDataset(Dataset):
+    """
+    Bilateral X-ray pair dataset for contralateral progression modeling.
+
+    Args:
+        split_csv:                Path to the patient-level split CSV.
+        contralateral_pairs_csv:  Path to the pairs CSV produced by pair_contralateral.py.
+                                  Expected columns: patient_id, less_affected_side,
+                                  more_affected_side, and one *_delta column per feature.
+        roi_dir:                  Directory of normalised ROI PNGs.
+        num_features:             Number of feature delta dimensions.
+        transforms:               Torchvision transforms applied independently to each image.
+        image_size:               Resize target (unused directly; reserved for compatibility).
+        feature_schema:           Feature definition list used to select delta columns.
+
+    Returns per sample:
+        source:        (1, H, W) less-affected hand image.
+        target:        (1, H, W) more-affected hand image.
+        side:          0 if less-affected side is L, else 1.
+        feature_delta: (num_features,) float tensor of feature differences (more − less).
+        patient_id:    Patient identifier string.
+    """
+
     def __init__(
         self,
         split_csv,

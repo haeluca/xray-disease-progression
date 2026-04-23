@@ -1,9 +1,38 @@
+"""
+Dataset for Project A: feature-conditioned X-ray synthesis.
+
+Each sample provides a single image together with source and target feature
+vectors. When randomize_target=True the target vector is sampled uniformly —
+this is used during training to teach the generator to reach arbitrary feature
+states, not just reproduce the input.
+"""
+
 import torch
 import numpy as np
 from .base_dataset import BaseDataset
 
 
 class FeatureConditionedDataset(BaseDataset):
+    """
+    Single-image dataset with source and target OA feature vectors.
+
+    Args:
+        split_csv:        Path to the split CSV (columns: patient_id, filename).
+        metadata_csv:     Path to metadata CSV containing per-image feature values.
+        roi_dir:          Directory containing normalised ROI PNGs.
+        num_features:     Number of feature dimensions (overridden by feature_schema length).
+        transforms:       Torchvision transforms applied to the loaded image.
+        image_size:       Resize target for the loaded image.
+        randomize_target: If True, sample target_features uniformly (training augmentation).
+        feature_schema:   Feature definition list used to select and order metadata columns.
+
+    Returns per sample:
+        image:           (1, H, W) normalised grayscale tensor.
+        source_features: (num_features,) float tensor from metadata.
+        target_features: (num_features,) float tensor — same as source or randomised.
+        patient_id:      Patient identifier string.
+    """
+
     def __init__(
         self,
         split_csv,

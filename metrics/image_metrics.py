@@ -1,8 +1,25 @@
+"""
+Pixel-level image quality metrics implemented in pure PyTorch (no skimage dependency).
+
+All public functions expect image tensors in [0, 1] unless noted.
+evaluate_image_quality() accepts [-1, 1] and normalises internally.
+"""
+
 import torch
 import torch.nn.functional as F
 
 
 def ssim(pred, target, window_size=11, sigma=1.5):
+    """
+    Structural Similarity Index (SSIM) averaged over the batch and spatial dims.
+
+    Args:
+        pred, target: (B, C, H, W) tensors in [0, 1].
+        window_size:  Size of the Gaussian smoothing kernel.
+        sigma:        Standard deviation of the Gaussian kernel.
+    Returns:
+        Scalar SSIM in [-1, 1] (1.0 = identical images).
+    """
     def gaussian_window(window_size, sigma):
         x = torch.arange(window_size).float() - (window_size - 1) / 2
         gauss = torch.exp(-(x ** 2) / (2 * sigma ** 2))
@@ -27,6 +44,7 @@ def ssim(pred, target, window_size=11, sigma=1.5):
     sigma2_sq = F.conv2d(target ** 2, window, padding=window_size // 2, groups=C) - mu2_sq
     sigma12 = F.conv2d(pred * target, window, padding=window_size // 2, groups=C) - mu1_mu2
 
+    # stability constants from Wang et al. (2004); L=1 for [0,1] images
     C1 = 0.01 ** 2
     C2 = 0.03 ** 2
 
@@ -38,6 +56,15 @@ def ssim(pred, target, window_size=11, sigma=1.5):
 
 
 def psnr(pred, target, max_val=1.0):
+    """
+    Peak Signal-to-Noise Ratio in dB.
+
+    Args:
+        pred, target: (B, C, H, W) tensors in [0, 1].
+        max_val:      Maximum possible pixel value (1.0 for normalised images).
+    Returns:
+        Scalar PSNR in dB (higher = better; inf if images are identical).
+    """
     mse = torch.mean((pred - target) ** 2)
     if mse == 0:
         return torch.tensor(float('inf'), device=pred.device)
@@ -46,13 +73,18 @@ def psnr(pred, target, max_val=1.0):
 
 
 def l1_distance(pred, target):
+    """Mean absolute pixel error between pred and target."""
     return torch.mean(torch.abs(pred - target))
 
 
 def evaluate_image_quality(pred, target):
     """
-    Returns a dict with ssim, psnr, and l1 for a batch of images in [-1, 1].
-    Normalises to [0, 1] before computing metrics.
+    Compute SSIM, PSNR, and L1 for a batch of images in [-1, 1].
+
+    Normalises both tensors from [-1, 1] → [0, 1] before computing metrics.
+
+    Returns:
+        Dict with keys 'ssim', 'psnr', 'l1' (all Python floats).
     """
     pred_01 = (pred * 0.5 + 0.5).clamp(0, 1)
     target_01 = (target * 0.5 + 0.5).clamp(0, 1)
